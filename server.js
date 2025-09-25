@@ -10,18 +10,41 @@ const webpush = require("web-push");
 const allowedOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
 
 /** ---------------- Web Push (VAPID) ---------------- **/
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const sanitizeKey = (k) => (k || "").trim().replace(/\s+/g, "");
 
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-  console.warn("⚠️ VAPID keys missing. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in backend .env to enable Web Push.");
+const PUSH_SUBJECT = (process.env.PUSH_SUBJECT || 'mailto:admin@localhost').trim();
+const VAPID_PUBLIC_KEY = sanitizeKey(process.env.VAPID_PUBLIC_KEY);
+const VAPID_PRIVATE_KEY = sanitizeKey(process.env.VAPID_PRIVATE_KEY);
+
+function byteLenBase64Url(s) {
+  if (!s) return 0;
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const b64 = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
+  try { return Buffer.from(b64, 'base64').length; } catch { return -1; }
 }
 
-webpush.setVapidDetails(
-  "mailto:admin@example.com",
-  VAPID_PUBLIC_KEY || "public-key-not-set",
-  VAPID_PRIVATE_KEY || "private-key-not-set"
-);
+let pushEnabled = false;
+(() => {
+  const hasPub = !!VAPID_PUBLIC_KEY;
+  const hasPriv = !!VAPID_PRIVATE_KEY;
+  if (!hasPub || !hasPriv) {
+    console.warn('⚠️ Web Push disabled: missing VAPID env.', { hasPub, hasPriv, hasSubject: !!PUSH_SUBJECT });
+    return;
+  }
+  const pubBytes = byteLenBase64Url(VAPID_PUBLIC_KEY);
+  const privBytes = byteLenBase64Url(VAPID_PRIVATE_KEY);
+  if (pubBytes !== 65 || privBytes <= 0) {
+    console.error('❌ Web Push disabled: invalid VAPID key lengths.', { pubBytes, privBytes });
+    return;
+  }
+  try {
+    webpush.setVapidDetails(PUSH_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    pushEnabled = true;
+    console.log('✅ Web Push enabled. (publicKey bytes:', pubBytes, ')');
+  } catch (e) {
+    console.error('❌ setVapidDetails failed. Web Push disabled.', e.message);
+  }
+})();
 /** --------------------------------------------------- **/
 
 const app = express();
@@ -57,6 +80,7 @@ const io = new Server(server, {
 console.log("✅ Socket.IO mounted", { path: "/socketio", allowedOrigins });
 
 app.set("io", io);
+app.locals.pushEnabled = pushEnabled;
 
 /** ---------------- Web Push helpers & routes ---------------- **/
 async function sendPushToAll(payload) {
@@ -66,7 +90,7 @@ async function sendPushToAll(payload) {
     hasData: !!payload?.data
   });
   // Disabled if keys are not set
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  if (!app.locals.pushEnabled) return;
 
   const subs = await PushSubscription.find({}).lean();
   console.log("[push] subscriptions found:", subs.length);
@@ -97,8 +121,12 @@ app.set("sendPush", sendPushToAll);
 
 // Expose public VAPID key to frontend
 app.get("/api/push/public-key", (_req, res) => {
-  console.log("[push] GET /api/push/public-key -> hasKey:", !!VAPID_PUBLIC_KEY);
+  console.log("[push] GET /api/push/public-key", { pushEnabled: app.locals.pushEnabled === true, hasKey: !!VAPID_PUBLIC_KEY });
   res.json({ publicKey: VAPID_PUBLIC_KEY || "" });
+});
+
+app.get('/_debug/push', (_req, res) => {
+  res.json({ pushEnabled: app.locals.pushEnabled === true });
 });
 
 // Save (or upsert) a subscription from the client
