@@ -1,5 +1,8 @@
 const path = require("path");
-require("dotenv").config({ path: path.resolve(__dirname, '.env') });
+// Load .env only for local/dev. On Railway, runtime env vars are already injected.
+if (!process.env.RAILWAY_ENVIRONMENT && process.env.NODE_ENV !== 'production') {
+  require("dotenv").config({ path: path.resolve(__dirname, '.env') });
+}
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -27,6 +30,7 @@ let pushEnabled = false;
 (() => {
   const hasPub = !!VAPID_PUBLIC_KEY;
   const hasPriv = !!VAPID_PRIVATE_KEY;
+  console.log('[push] env presence', { hasPub, hasPriv, subject: !!PUSH_SUBJECT });
   if (!hasPub || !hasPriv) {
     console.warn('⚠️ Web Push disabled: missing VAPID env.', { hasPub, hasPriv, hasSubject: !!PUSH_SUBJECT });
     return;
@@ -53,6 +57,15 @@ app.use(cors({ origin: allowedOrigins }));
 app.use("/api", require("./routes"));
 
 const mongoURI = process.env.MONGO_URI;
+
+console.log("[env] diag", {
+  hasMongo: !!process.env.MONGO_URI,
+  hasVapidPub: !!process.env.VAPID_PUBLIC_KEY,
+  hasVapidPriv: !!process.env.VAPID_PRIVATE_KEY,
+  hasSubject: !!process.env.PUSH_SUBJECT,
+  nodeEnv: process.env.NODE_ENV || 'undefined',
+  railway: !!process.env.RAILWAY_ENVIRONMENT
+});
 
 if (!mongoURI) {
     console.error("❌ MONGO_URI is missing. Check your .env file!");
