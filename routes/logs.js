@@ -317,7 +317,13 @@ router.post("/logs/start", authenticateToken, async (req, res) => {
             return res.status(500).json({ message: "Database update failed." });
         }
 
-        const updatePayload = { roomNumber: String(roomNumber).padStart(3, "0"), status: "in_progress", previousStatus: "available" };
+        const updatePayload = {
+            roomNumber: String(roomNumber).padStart(3, "0"),
+            status: "in_progress",
+            previousStatus: "available",
+            startedBy: username,
+            startTime
+        };
         console.log("Emitting roomUpdate from /logs/start:", updatePayload);
         io.emit("roomUpdate", updatePayload);
         // Web Push: Cleaning Started
@@ -390,7 +396,14 @@ router.post("/logs/finish", async (req, res) => {
             duration = `${Math.floor(diffMinutes)} minutes`;
         }
 
-        const updatePayload = { roomNumber: String(roomNumber).padStart(3, "0"), status: "finished", previousStatus };
+        const updatePayload = {
+            roomNumber: String(roomNumber).padStart(3, "0"),
+            status: "finished",
+            previousStatus,
+            finishedBy: username,
+            finishTime,
+            duration
+        };
         console.log("[push] trigger FINISH for room", String(roomNumber).padStart(3, "0"), "by", username);
         console.log("Emitting roomUpdate from /logs/finish:", updatePayload);
         io.emit("roomUpdate", updatePayload);
@@ -611,6 +624,119 @@ router.post("/logs/notes", authenticateToken, async (req, res) => {
     } catch (error) {
         console.error("Error updating room note:", error);
         res.status(500).json({ message: "Failed to update room note" });
+    }
+});
+
+router.get("/logs/live-feed", authenticateToken, async (req, res) => {
+    try {
+        const events = [];
+        const tz = "Asia/Phnom_Penh";
+        const parseTimestamp = (value) => {
+            if (!value) return null;
+            const mLocal = moment.tz(value, "MM/DD/YYYY, h:mm:ss A", tz);
+            if (mLocal.isValid()) {
+                return mLocal.toDate();
+            }
+            const mIso = moment(value);
+            return mIso.isValid() ? mIso.toDate() : null;
+        };
+        const padRoom = (value) => String(value).padStart(3, "0");
+
+        const cleaningLogs = await CleaningLog.find({})
+            .sort({ date: -1, _id: -1 })
+            .limit(200)
+            .lean();
+
+        cleaningLogs.forEach((log) => {
+            const roomNumber = padRoom(log.roomNumber);
+            const startAt = parseTimestamp(log.startTime);
+            if (startAt) {
+                events.push({
+                    type: "roomUpdate",
+                    ts: startAt.getTime(),
+                    payload: {
+                        roomNumber,
+                        status: "in_progress",
+                        previousStatus: "available",
+                        startedBy: log.startedBy,
+                        startTime: log.startTime,
+                    },
+                });
+            }
+
+            const finishAt = parseTimestamp(log.finishTime);
+            if (finishAt) {
+                let duration = null;
+                if (startAt) {
+                    const diffMinutes = moment.duration(finishAt.getTime() - startAt.getTime()).asMinutes();
+                    duration = `${Math.floor(diffMinutes)} minutes`;
+                }
+
+                events.push({
+                    type: "roomUpdate",
+                    ts: finishAt.getTime(),
+                    payload: {
+                        roomNumber,
+                        status: "finished",
+                        previousStatus: log.startTime ? "in_progress" : "available",
+                        finishedBy: log.finishedBy,
+                        finishTime: log.finishTime,
+                        duration,
+                    },
+                });
+            }
+
+            const checkedAt = parseTimestamp(log.checkedTime);
+            if (checkedAt) {
+                events.push({
+                    type: "roomChecked",
+                    ts: checkedAt.getTime(),
+                    payload: {
+                        roomNumber,
+                        status: "checked",
+                        checkedBy: log.checkedBy,
+                        checkedTime: log.checkedTime,
+                    },
+                });
+            }
+        });
+
+        const dndEntries = await RoomDND.find({}).lean();
+        dndEntries.forEach((entry) => {
+            const timestamp = entry.dndSetAt ? new Date(entry.dndSetAt).getTime() : null;
+            if (!timestamp) return;
+            events.push({
+                type: "dndUpdate",
+                ts: timestamp,
+                payload: {
+                    roomNumber: padRoom(entry.roomNumber),
+                    dndStatus: entry.dndStatus,
+                    dndSetBy: entry.dndSetBy,
+                    dndSetAt: entry.dndSetAt,
+                },
+            });
+        });
+
+        const roomNotes = await RoomNote.find({}).lean();
+        roomNotes.forEach((note) => {
+            const timestamp = note.updatedAt ? new Date(note.updatedAt).getTime() : null;
+            if (!timestamp) return;
+            events.push({
+                type: "noteUpdate",
+                ts: timestamp,
+                payload: {
+                    roomNumber: padRoom(note.roomNumber),
+                    notes: note,
+                },
+            });
+        });
+
+        events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+        res.status(200).json({ events: events.slice(0, 200) });
+    } catch (error) {
+        console.error("Error fetching live feed seed data:", error);
+        res.status(500).json({ message: "Failed to fetch live feed data", error: error.message });
     }
 });
 
