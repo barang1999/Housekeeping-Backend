@@ -457,74 +457,75 @@ router.post("/logs/check", async (req, res) => {
 router.get("/logs", async (req, res) => {
     try {
         const { status: filterStatus, dateFilter } = req.query;
-        let logs = await CleaningLog.find({});
 
-        // Map existing logs to a more usable format and track their room numbers
-        const existingLogsMap = new Map();
+        const now = moment().tz('Asia/Phnom_Penh');
+        let startDate = null;
+        let endDate = null;
+
+        switch (dateFilter) {
+            case 'today':
+                startDate = now.clone().startOf('day');
+                endDate = startDate.clone().add(1, 'day');
+                break;
+            case 'yesterday':
+                startDate = now.clone().subtract(1, 'day').startOf('day');
+                endDate = startDate.clone().add(1, 'day');
+                break;
+            case 'this_week':
+                startDate = now.clone().startOf('week');
+                endDate = startDate.clone().add(1, 'week');
+                break;
+            case 'this_month':
+                startDate = now.clone().startOf('month');
+                endDate = startDate.clone().add(1, 'month');
+                break;
+            default:
+                break;
+        }
+
+        const query = {};
+        if (startDate && endDate) {
+            query.date = {
+                $gte: startDate.toDate(),
+                $lt: endDate.toDate()
+            };
+        }
+
+        const logs = await CleaningLog.find(query)
+            .sort({ date: -1, _id: -1 })
+            .lean();
+
+        // Keep only the newest log for each room so filters reflect current state.
+        const latestLogsMap = new Map();
         logs.forEach(log => {
             const roomStr = String(log.roomNumber).padStart(3, "0");
-            existingLogsMap.set(roomStr, {
-                ...log.toObject(),
-                roomNumber: roomStr,
-            });
+            if (!latestLogsMap.has(roomStr)) {
+                latestLogsMap.set(roomStr, {
+                    ...log,
+                    roomNumber: roomStr,
+                });
+            }
         });
 
         let allRoomsData = allRoomNumbers.map(roomNumber => {
-            if (existingLogsMap.has(roomNumber)) {
-                return existingLogsMap.get(roomNumber);
-            } else {
-                // Room is available (not started) if no log exists
-                return {
-                    _id: new mongoose.Types.ObjectId(), // Generate a new ObjectId for consistency
-                    roomNumber: roomNumber,
-                    startTime: null,
-                    startedBy: null,
-                    finishTime: null,
-                    finishedBy: null,
-                    checkedTime: null,
-                    checkedBy: null,
-                    dndStatus: false,
-                    status: "available",
-                };
+            if (latestLogsMap.has(roomNumber)) {
+                return latestLogsMap.get(roomNumber);
             }
+
+            return {
+                _id: new mongoose.Types.ObjectId(),
+                roomNumber,
+                startTime: null,
+                startedBy: null,
+                finishTime: null,
+                finishedBy: null,
+                checkedTime: null,
+                checkedBy: null,
+                dndStatus: false,
+                status: "available",
+            };
         });
 
-        // Apply date filter
-        if (dateFilter && dateFilter !== 'all') {
-            const now = moment().tz('Asia/Phnom_Penh');
-            let startDate, endDate;
-
-            switch (dateFilter) {
-                case 'today':
-                    startDate = now.clone().startOf('day');
-                    endDate = now.clone().endOf('day');
-                    break;
-                case 'yesterday':
-                    startDate = now.clone().subtract(1, 'days').startOf('day');
-                    endDate = now.clone().subtract(1, 'days').endOf('day');
-                    break;
-                case 'this_week':
-                    startDate = now.clone().startOf('week');
-                    endDate = now.clone().endOf('week');
-                    break;
-                case 'this_month':
-                    startDate = now.clone().startOf('month');
-                    endDate = now.clone().endOf('month');
-                    break;
-                default:
-                    break;
-            }
-
-            if (startDate && endDate) {
-                allRoomsData = allRoomsData.filter(room => {
-                    if (room.status === 'available') return true; // Always include available rooms
-                    const roomDate = moment(room.startTime).tz('Asia/Phnom_Penh');
-                    return roomDate.isBetween(startDate, endDate);
-                });
-            }
-        }
-
-        // Apply filter based on status
         if (filterStatus && filterStatus !== 'all') {
             allRoomsData = allRoomsData.filter(room => room.status === filterStatus);
         }
