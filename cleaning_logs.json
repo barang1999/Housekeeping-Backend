@@ -1,0 +1,12 @@
+[
+  {
+    "room": "Living Room",
+    "user": "Alice",
+    "timestamp": "2025-09-24T10:00:00Z"
+  },
+  {
+    "room": "Kitchen",
+    "user": "Bob",
+    "timestamp": "2025-09-24T11:00:00Z"
+  }
+]
