@@ -304,11 +304,11 @@ cron.schedule('0 0 * * *', async () => {
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-        const yesterday = moment().tz('Asia/Phnom_Penh').subtract(1, 'day').startOf('day').toDate();
+        const today = moment().tz('Asia/Phnom_Penh').startOf('day').toDate();
 
-        await CleaningLog.deleteMany({ date: { $lte: yesterday } }).session(session);
-        await InspectionLog.deleteMany({ date: { $lte: yesterday } }).session(session);
-        await RoomDND.updateMany({ dndSetAt: { $lte: yesterday } }, { $set: { dndStatus: false, dndSetAt: null, dndSetBy: null } }).session(session);
+        await CleaningLog.deleteMany({ date: { $lt: today } }).session(session);
+        await InspectionLog.deleteMany({ date: { $lt: today } }).session(session);
+        await RoomDND.updateMany({ dndSetAt: { $lt: today } }, { $set: { dndStatus: false, dndSetAt: null, dndSetBy: null } }).session(session);
 
         await session.commitTransaction();
         session.endSession();
