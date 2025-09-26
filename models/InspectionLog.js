@@ -18,3 +18,4 @@ InspectionLogSchema.index(
 );
 
 module.exports = mongoose.models.InspectionLog || mongoose.model('InspectionLog', InspectionLogSchema);
+    

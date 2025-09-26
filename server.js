@@ -10,6 +10,7 @@ const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const webpush = require("web-push");
+const cron = require("node-cron");
 
 const allowedOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
 
@@ -296,6 +297,33 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3001;
+
+// Schedule a task to run at midnight every day in Asia/Phnom_Penh timezone
+cron.schedule('0 0 * * *', async () => {
+    console.log('Running daily log reset...');
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+        const yesterday = moment().tz('Asia/Phnom_Penh').subtract(1, 'day').startOf('day').toDate();
+
+        await CleaningLog.deleteMany({ date: { $lte: yesterday } }).session(session);
+        await InspectionLog.deleteMany({ date: { $lte: yesterday } }).session(session);
+        await RoomDND.updateMany({ dndSetAt: { $lte: yesterday } }, { $set: { dndStatus: false, dndSetAt: null, dndSetBy: null } }).session(session);
+
+        await session.commitTransaction();
+        session.endSession();
+
+        io.emit('dailyReset');
+        console.log('Daily log reset complete.');
+    } catch (error) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error('Error during daily log reset:', error);
+    }
+}, {
+    timezone: "Asia/Phnom_Penh"
+});
+
 server.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
 });
