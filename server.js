@@ -249,7 +249,7 @@ io.on('connection', (socket) => {
             });
 
             // Fetch DND statuses for today
-            const dndLogs = await RoomDND.find({ dndSetAt: { $gte: today, $lt: tomorrow } }, "roomNumber dndStatus").lean();
+            const dndLogs = await RoomDND.find({ date: { $gte: today, $lt: tomorrow } }, "roomNumber dndStatus").lean();
             const dndStatus = {};
             dndLogs.forEach(dnd => {
                 dndStatus[String(dnd.roomNumber).padStart(3, "0")] = dnd.dndStatus ? "dnd" : "available";
@@ -308,7 +308,7 @@ cron.schedule('0 0 * * *', async () => {
 
         await CleaningLog.deleteMany({ date: { $lt: today } }).session(session);
         await InspectionLog.deleteMany({ date: { $lt: today } }).session(session);
-        await RoomDND.updateMany({ dndSetAt: { $lt: today } }, { $set: { dndStatus: false, dndSetAt: null, dndSetBy: null } }).session(session);
+        await RoomDND.deleteMany({ date: { $lt: today } }).session(session);
 
         await session.commitTransaction();
         session.endSession();

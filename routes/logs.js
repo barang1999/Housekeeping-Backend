@@ -197,15 +197,18 @@ router.post("/logs/dnd", authenticateToken, async (req, res) => {
             return res.status(401).json({ message: "User not found" });
         }
 
+        const { start, end } = getTodayRange();
         const updatedRoom = await RoomDND.findOneAndUpdate(
-            { roomNumber },
+            { roomNumber, date: { $gte: start, $lt: end } },
             { 
                 $set: { 
                     dndStatus: dndStatus, 
-                    dndReason: null, // Always null if reason is removed
-                    dndSetBy: dndSetBy,   // Clear setBy if DND is off
-                    dndSetAt: dndStatus ? new Date() : null  // Clear setAt if DND is off
-                } 
+                    dndSetBy: dndSetBy,
+                    dndSetAt: dndStatus ? new Date() : null
+                },
+                $setOnInsert: {
+                    date: start
+                }
             },
             { upsert: true, new: true }
         );
@@ -247,7 +250,8 @@ router.post("/logs/dnd", authenticateToken, async (req, res) => {
 
 router.get("/logs/dnd", authenticateToken, async (req, res) => {
     try {
-        const dndLogs = await RoomDND.find({}).lean(); // Removed populate
+        const { start, end } = getTodayRange();
+        const dndLogs = await RoomDND.find({ date: { $gte: start, $lt: end } }).lean();
         if (!dndLogs || dndLogs.length === 0) {
             return res.json([]);
         }
