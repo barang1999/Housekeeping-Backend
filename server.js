@@ -5,6 +5,7 @@ if (!process.env.RAILWAY_ENVIRONMENT && process.env.NODE_ENV !== 'production') {
 }
 const express = require("express");
 const mongoose = require("mongoose");
+const moment = require("moment-timezone");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -260,8 +261,14 @@ io.on('connection', (socket) => {
                 priorities[String(p.roomNumber).padStart(3, "0")] = p.priority;
             });
 
-            // Fetch inspection logs for today
-            const inspectionLogs = await InspectionLog.find({ date: { $gte: today, $lt: tomorrow } });
+            // Fetch inspection logs for today (Asia/Phnom_Penh)
+            const inspectionStart = moment().tz('Asia/Phnom_Penh').startOf('day').toDate();
+            const inspectionEnd = moment(inspectionStart).add(1, 'day').toDate();
+            const inspectionDocs = await InspectionLog.find({ date: { $gte: inspectionStart, $lt: inspectionEnd } }).lean();
+            const inspectionLogs = inspectionDocs.map(log => ({
+                ...log,
+                roomNumber: String(log.roomNumber).padStart(3, "0"),
+            }));
 
             // Fetch all room notes updated today so UI can show current notes
             const roomNoteLogs = await RoomNote.find({ updatedAt: { $gte: today, $lt: tomorrow } });

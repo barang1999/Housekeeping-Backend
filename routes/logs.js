@@ -15,6 +15,11 @@ const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
+const getTodayRange = () => {
+    const start = moment().tz('Asia/Phnom_Penh').startOf('day');
+    return { start: start.toDate(), end: start.clone().add(1, 'day').toDate() };
+};
+
 const allRoomNumbers = [
     "001", "002", "003", "004", "005", "006", "007",
     "011", "012", "013", "014", "015", "016", "017",
@@ -50,16 +55,22 @@ router.post("/logs/inspection", authenticateToken, async (req, res) => {
     const { roomNumber, item, status, username } = req.body;
     const io = req.app.get('io');
     try {
+        const { start, end } = getTodayRange();
         await InspectionLog.updateOne(
-            { roomNumber },
+            { roomNumber, date: { $gte: start, $lt: end } },
             { 
                 $set: { [`items.${item}`]: status, updatedBy: username, updatedAt: new Date() },
-                $setOnInsert: { roomNumber }
+                $setOnInsert: { roomNumber, date: start }
             },
             { upsert: true }
         );
 
-        io.emit("inspectionUpdate", { roomNumber, item, status, updatedBy: username });
+        const updatedLog = await InspectionLog.findOne({ roomNumber, date: { $gte: start, $lt: end } }).lean();
+        if (updatedLog) {
+            const paddedRoom = String(roomNumber).padStart(3, "0");
+            const logPayload = { ...updatedLog, roomNumber: paddedRoom };
+            io.emit("inspectionUpdate", { roomNumber: paddedRoom, log: logPayload });
+        }
         res.status(200).json({ message: "Inspection updated successfully" });
     } catch (err) {
         console.error(err);
@@ -69,7 +80,8 @@ router.post("/logs/inspection", authenticateToken, async (req, res) => {
 
 router.get('/logs/inspection', authenticateToken, async (req, res) => {
     try {
-        const logs = await InspectionLog.find({});
+        const { start, end } = getTodayRange();
+        const logs = await InspectionLog.find({ date: { $gte: start, $lt: end } });
         res.status(200).json(logs);
     } catch (err) {
         console.error('❌ Failed to fetch inspection logs:', err);
@@ -81,7 +93,8 @@ router.get('/logs/inspection', authenticateToken, async (req, res) => {
 router.get('/logs/inspection/:roomNumber', authenticateToken, async (req, res) => {
     try {
         const { roomNumber } = req.params;
-        const log = await InspectionLog.findOne({ roomNumber });
+        const { start, end } = getTodayRange();
+        const log = await InspectionLog.findOne({ roomNumber, date: { $gte: start, $lt: end } });
         if (!log) {
             return res.status(404).json({ message: 'Inspection log not found for this room.' });
         }
@@ -99,20 +112,26 @@ router.post("/inspection/submit", authenticateToken, async (req, res) => {
 
     try {
         // Find and update the inspection log for the room, or create if it doesn't exist
+        const { start, end } = getTodayRange();
         const updatedLog = await InspectionLog.findOneAndUpdate(
-            { roomNumber },
+            { roomNumber, date: { $gte: start, $lt: end } },
             {
                 $set: {
                     items: inspectionResults, // Store all inspection results as a Map
                     overallScore: overallScore,
                     updatedBy: username,
                     updatedAt: timestamp || new Date().toISOString()
-                }
+                },
+                $setOnInsert: { roomNumber, date: start }
             },
             { upsert: true, new: true } // Create if not found, return the new document
         );
 
-        io.emit("inspectionSubmitted", { roomNumber, overallScore, updatedBy: username });
+        if (updatedLog) {
+            const paddedRoom = String(roomNumber).padStart(3, "0");
+            const logPayload = { ...updatedLog.toObject(), roomNumber: paddedRoom };
+            io.emit("inspectionUpdate", { roomNumber: paddedRoom, log: logPayload });
+        }
         res.status(200).json({ message: "Inspection submitted successfully", log: updatedLog });
 
     } catch (err) {
