@@ -263,8 +263,8 @@ io.on('connection', (socket) => {
             // Fetch inspection logs for today
             const inspectionLogs = await InspectionLog.find({ date: { $gte: today, $lt: tomorrow } });
 
-            // Fetch all room notes for today
-            const roomNoteLogs = await RoomNote.find({ createdAt: { $gte: today, $lt: tomorrow } });
+            // Fetch all room notes updated today so UI can show current notes
+            const roomNoteLogs = await RoomNote.find({ updatedAt: { $gte: today, $lt: tomorrow } });
             const roomNotes = {};
             roomNoteLogs.forEach(note => {
                 roomNotes[String(note.roomNumber).padStart(3, "0")] = note;
