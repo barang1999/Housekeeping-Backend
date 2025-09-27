@@ -238,13 +238,13 @@ io.on('connection', (socket) => {
             cleaningLogs.forEach(log => {
                 const roomStr = String(log.roomNumber).padStart(3, "0");
                 if (log.checkedTime) {
-                    cleaningStatus[roomStr] = "checked";
+                    cleaningStatus[roomStr] = { status: "checked" };
                 } else if (log.finishTime) {
-                    cleaningStatus[roomStr] = "finished";
+                    cleaningStatus[roomStr] = { status: "finished" };
                 } else if (log.startTime) {
-                    cleaningStatus[roomStr] = "in_progress";
+                    cleaningStatus[roomStr] = { status: "in_progress", startTime: log.startTime };
                 } else {
-                    cleaningStatus[roomStr] = "not_started";
+                    cleaningStatus[roomStr] = { status: "not_started" };
                 }
             });
 

@@ -425,6 +425,7 @@ router.post("/logs/finish", async (req, res) => {
             previousStatus,
             finishedBy: username,
             finishTime,
+            startTime: updatedLog.startTime, // Add this line
             duration
         };
         console.log("[push] trigger FINISH for room", String(roomNumber).padStart(3, "0"), "by", username);
