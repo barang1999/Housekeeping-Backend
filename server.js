@@ -185,6 +185,12 @@ const RoomPriority = require("./models/RoomPriority");
 const InspectionLog = require("./models/InspectionLog");
 const RoomNote = require("./models/RoomNote");
 
+// ---- Date helpers (Asia/Phnom_Penh) ----
+function getTodayRange() {
+  const start = moment().tz('Asia/Phnom_Penh').startOf('day');
+  return { start: start.toDate(), end: start.clone().add(1, 'day').toDate() };
+}
+
 /** ---- Push Subscription model (minimal) ---- **/
 const SubscriptionSchema = new mongoose.Schema({
   endpoint: { type: String, required: true, unique: true },
@@ -211,10 +217,7 @@ io.on('connection', (socket) => {
 
     socket.on('requestInitialData', async () => {
         try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const tomorrow = new Date(today);
-            tomorrow.setDate(tomorrow.getDate() + 1);
+            const { start: today, end: tomorrow } = getTodayRange();
 
             // Fetch existing logs for today
             const existingLogs = await CleaningLog.find({ date: { $gte: today, $lt: tomorrow } });

@@ -8,7 +8,10 @@ const InspectionLog = require("../models/InspectionLog");
 const RoomDND = require("../models/RoomDND");
 const RoomPriority = require("../models/RoomPriority");
 const { authenticateToken } = require("./auth");
+
 const RoomNote = require("../models/RoomNote");
+const LiveFeedEvent = require("../models/LiveFeedEvent");
+const { emitRoomUpdate, emitRoomChecked, emitDndUpdate, emitPriorityUpdate, emitNoteUpdate } = require("../helpers/liveFeed");
 
 const router = express.Router();
 
@@ -171,7 +174,7 @@ router.post("/logs/priority", async (req, res) => {
             { upsert: true, new: true }
         );
 
-        io.emit("priorityUpdate", { roomNumber, priority, allowCleaningTime });
+        await emitPriorityUpdate(io, { roomNumber, priority, allowCleaningTime });
 
         res.json({ message: "Priority updated successfully" });
     } catch (error) {
@@ -218,7 +221,7 @@ router.post("/logs/dnd", authenticateToken, async (req, res) => {
         }
 
         console.log("[push] trigger DND for room", String(roomNumber).padStart(3, "0"), "->", updatedRoom.dndStatus, "by", dndSetBy);
-        io.emit("dndUpdate", { 
+        await emitDndUpdate(io, { 
             roomNumber: String(roomNumber).padStart(3, "0"), 
             dndStatus: updatedRoom.dndStatus, 
             dndReason: updatedRoom.dndReason,
@@ -272,15 +275,10 @@ router.post("/logs/reset-cleaning", async (req, res) => {
         }
 
         roomNumber = parseInt(roomNumber, 10);
+        const { start, end } = getTodayRange();
 
-        const existingLog = await CleaningLog.findOne({ roomNumber });
-
-        if (!existingLog) {
-            return res.status(400).json({ message: `Room ${roomNumber} not found in logs.` });
-        }
-
-        await CleaningLog.updateOne(
-            { _id: existingLog._id },
+        await CleaningLog.findOneAndUpdate(
+            { roomNumber, date: { $gte: start, $lt: end } },
             {
                 $set: {
                     startTime: null,
@@ -288,10 +286,14 @@ router.post("/logs/reset-cleaning", async (req, res) => {
                     startedBy: null,
                     finishedBy: null,
                     status: "available"
-                }
-            }
+                },
+                $setOnInsert: { date: start }
+            },
+            { upsert: true }
         );
 
+        const padded = String(roomNumber).padStart(3, "0");
+        await emitRoomUpdate(io, { roomNumber: padded, status: "available", previousStatus: "available" });
         io.emit("resetCleaning", { roomNumber, status: "available" });
 
         res.json({ message: `✅ Cleaning status reset for Room ${roomNumber}` });
@@ -313,10 +315,7 @@ router.post("/logs/start", authenticateToken, async (req, res) => {
 
         roomNumber = parseInt(roomNumber, 10);
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
+        const { start: today, end: tomorrow } = getTodayRange();
 
         const existingLog = await CleaningLog.findOne({
             roomNumber,
@@ -332,7 +331,10 @@ router.post("/logs/start", authenticateToken, async (req, res) => {
 
         const log = await CleaningLog.findOneAndUpdate(
             { roomNumber, date: { $gte: today, $lt: tomorrow } },
-            { $set: { startTime, startedBy: username, finishTime: null, finishedBy: null, status: "in_progress" } },
+            {
+                $set: { startTime, startedBy: username, finishTime: null, finishedBy: null, status: "in_progress" },
+                $setOnInsert: { date: today }
+            },
             { upsert: true, new: true }
         );
         
@@ -348,7 +350,7 @@ router.post("/logs/start", authenticateToken, async (req, res) => {
             startTime
         };
         console.log("Emitting roomUpdate from /logs/start:", updatePayload);
-        io.emit("roomUpdate", updatePayload);
+        await emitRoomUpdate(io, updatePayload);
         // Web Push: Cleaning Started
         const sendPushStart = req.app.get("sendPush");
         if (sendPushStart) {
@@ -386,7 +388,8 @@ router.post("/logs/finish", async (req, res) => {
     status = status || "finished";
 
     try {
-        const log = await CleaningLog.findOne({ roomNumber, finishTime: null });
+        const { start, end } = getTodayRange();
+        const log = await CleaningLog.findOne({ roomNumber, date: { $gte: start, $lt: end }, finishTime: null });
         
         if (!log) {
             return res.status(400).json({ message: "Log not found or already finished" });
@@ -395,7 +398,7 @@ router.post("/logs/finish", async (req, res) => {
         let previousStatus = log.startTime ? "in_progress" : "available";
 
         const updatedLog = await CleaningLog.findOneAndUpdate(
-            { roomNumber, finishTime: null },
+            { roomNumber, date: { $gte: start, $lt: end }, finishTime: null },
             {
                 $set: {
                     finishTime,
@@ -413,9 +416,9 @@ router.post("/logs/finish", async (req, res) => {
         // Calculate duration
         let duration = null;
         if (updatedLog.startTime && updatedLog.finishTime) {
-            const start = moment.tz(updatedLog.startTime, "MM/DD/YYYY, h:mm:ss A", "Asia/Phnom_Penh");
-            const end = moment.tz(updatedLog.finishTime, "MM/DD/YYYY, h:mm:ss A", "Asia/Phnom_Penh");
-            const diffMinutes = moment.duration(end.diff(start)).asMinutes();
+            const startMoment = moment.tz(updatedLog.startTime, "MM/DD/YYYY, h:mm:ss A", "Asia/Phnom_Penh");
+            const endMoment = moment.tz(updatedLog.finishTime, "MM/DD/YYYY, h:mm:ss A", "Asia/Phnom_Penh");
+            const diffMinutes = moment.duration(endMoment.diff(startMoment)).asMinutes();
             duration = `${Math.floor(diffMinutes)} minutes`;
         }
 
@@ -430,7 +433,7 @@ router.post("/logs/finish", async (req, res) => {
         };
         console.log("[push] trigger FINISH for room", String(roomNumber).padStart(3, "0"), "by", username);
         console.log("Emitting roomUpdate from /logs/finish:", updatePayload);
-        io.emit("roomUpdate", updatePayload);
+        await emitRoomUpdate(io, updatePayload);
         // Web Push: Cleaning Finished
         const sendPushFinish = req.app.get("sendPush");
         if (sendPushFinish) {
@@ -464,10 +467,11 @@ router.post("/logs/check", async (req, res) => {
 
     roomNumber = parseInt(roomNumber, 10);
     const checkedTime = new Date().toISOString();
+    const { start, end } = getTodayRange();
 
     try {
         const updatedLog = await CleaningLog.findOneAndUpdate(
-            { roomNumber, finishTime: { $ne: null }, checkedTime: null },
+            { roomNumber, date: { $gte: start, $lt: end }, finishTime: { $ne: null }, checkedTime: null },
             { $set: { checkedTime, checkedBy: username, status: "checked" } },
             { new: true }
         );
@@ -476,7 +480,7 @@ router.post("/logs/check", async (req, res) => {
             return res.status(400).json({ message: "Room not found or already checked." });
         }
 
-        io.emit("roomChecked", { 
+        await emitRoomChecked(io, { 
             roomNumber: String(roomNumber).padStart(3, "0"), 
             status: "checked", 
             checkedBy: username, 
@@ -643,7 +647,7 @@ router.post("/logs/notes", authenticateToken, async (req, res) => {
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
 
-        io.emit("noteUpdate", { roomNumber, notes: updatedNote });
+        await emitNoteUpdate(io, { roomNumber, notes: updatedNote });
         res.status(200).json(updatedNote);
     } catch (error) {
         console.error("Error updating room note:", error);
@@ -765,3 +769,27 @@ router.get("/logs/live-feed", authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+// GET /logs/live-feed (seed endpoint) is above; do not remove.
+
+// New paged live feed history endpoint
+router.get("/live-feed", authenticateToken, async (req, res) => {
+    try {
+        const beforeRaw = req.query.before;
+        const limitRaw = req.query.limit;
+        const before = beforeRaw ? new Date(beforeRaw) : new Date();
+        let limit = parseInt(limitRaw || '100', 10);
+        if (Number.isNaN(limit) || limit <= 0) limit = 100;
+        if (limit > 200) limit = 200;
+
+        const events = await LiveFeedEvent
+            .find({ ts: { $lt: before } })
+            .sort({ ts: -1 })
+            .limit(limit)
+            .lean();
+
+        res.status(200).json({ events });
+    } catch (err) {
+        console.error('❌ Failed to fetch live feed events:', err);
+        res.status(500).json({ message: 'Failed to retrieve live feed events' });
+    }
+});
