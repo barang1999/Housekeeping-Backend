@@ -132,7 +132,10 @@ router.post("/inspection/submit", authenticateToken, async (req, res) => {
 
         if (updatedLog) {
             const paddedRoom = String(roomNumber).padStart(3, "0");
-            const logPayload = { ...updatedLog.toObject(), roomNumber: paddedRoom };
+            const logObject = updatedLog.toObject();
+            logObject.items = Object.fromEntries(logObject.items);
+            const logPayload = { ...logObject, roomNumber: paddedRoom };
+            console.log('Emitting inspectionUpdate event:', { roomNumber: paddedRoom, log: logPayload });
             io.emit("inspectionUpdate", { roomNumber: paddedRoom, log: logPayload });
         }
         res.status(200).json({ message: "Inspection submitted successfully", log: updatedLog });

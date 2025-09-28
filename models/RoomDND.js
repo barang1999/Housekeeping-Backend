@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const roomDNDSchema = new mongoose.Schema({
-    roomNumber: { type: String, required: true },
+    roomNumber: { type: Number, required: true },
     dndStatus: { type: Boolean, default: false },
     dndSetBy: { type: String },
     dndSetAt: { type: Date },
