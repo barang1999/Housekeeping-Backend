@@ -301,15 +301,15 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3001;
 
-// Schedule a task to run at midnight every day in Asia/Phnom_Penh timezone
-cron.schedule('0 0 * * *', async () => {
+// Schedule a task shortly after midnight (00:05) every day in Asia/Phnom_Penh timezone
+cron.schedule('5 0 * * *', async () => {
     console.log('Running daily log reset...');
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
         const today = moment().tz('Asia/Phnom_Penh').startOf('day').toDate();
 
-        await CleaningLog.deleteMany({ date: { $lt: today } }).session(session);
+        // Preserve historical cleaning logs; only clear day-specific collections that should reset
         await InspectionLog.deleteMany({ date: { $lt: today } }).session(session);
         await RoomDND.deleteMany({ date: { $lt: today } }).session(session);
 
