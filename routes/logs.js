@@ -15,6 +15,8 @@ const { emitRoomUpdate, emitRoomChecked, emitDndUpdate, emitPriorityUpdate, emit
 
 const router = express.Router();
 
+const DEFAULT_LATEST_WINDOW_DAYS = parseInt(process.env.LOGS_LATEST_WINDOW_DAYS || '30', 10);
+
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
@@ -33,8 +35,11 @@ const allRoomNumbers = [
 
 router.get("/logs/status", async (req, res) => {
     try {
-        const logs = await CleaningLog.find();
-        let status = {};
+        const { start, end } = getTodayRange();
+        const logs = await CleaningLog.find({
+            date: { $gte: start, $lt: end }
+        }).lean();
+        const status = {};
         logs.forEach(log => {
             const roomStr = String(log.roomNumber).padStart(3, "0");
             if (log.checkedTime) {
@@ -45,6 +50,11 @@ router.get("/logs/status", async (req, res) => {
                 status[roomStr] = "in_progress";
             } else {
                 status[roomStr] = "not_started";
+            }
+        });
+        allRoomNumbers.forEach((room) => {
+            if (!status[room]) {
+                status[room] = "available";
             }
         });
         res.json(status);
@@ -533,23 +543,31 @@ router.get("/logs", async (req, res) => {
                 $gte: startDate.toDate(),
                 $lt: endDate.toDate()
             };
+        } else {
+            const fallbackStart = now.clone().subtract(DEFAULT_LATEST_WINDOW_DAYS, 'days').startOf('day');
+            query.date = {
+                $gte: fallbackStart.toDate()
+            };
         }
+        const aggregation = [
+            { $match: query },
+            { $sort: { date: -1, _id: -1 } },
+            {
+                $group: {
+                    _id: "$roomNumber",
+                    doc: { $first: "$$ROOT" }
+                }
+            },
+            { $replaceRoot: { newRoot: "$doc" } }
+        ];
 
-        const logs = await CleaningLog.find(query)
-            .sort({ date: -1, _id: -1 })
-            .lean();
-
-        // Keep only the newest log for each room so filters reflect current state.
-        const latestLogsMap = new Map();
-        logs.forEach(log => {
-            const roomStr = String(log.roomNumber).padStart(3, "0");
-            if (!latestLogsMap.has(roomStr)) {
-                latestLogsMap.set(roomStr, {
-                    ...log,
-                    roomNumber: roomStr,
-                });
-            }
-        });
+        const latestLogs = await CleaningLog.aggregate(aggregation);
+        const latestLogsMap = new Map(
+            latestLogs.map((log) => {
+                const roomStr = String(log.roomNumber).padStart(3, "0");
+                return [roomStr, { ...log, roomNumber: roomStr }];
+            })
+        );
 
         let allRoomsData = allRoomNumbers.map(roomNumber => {
             if (latestLogsMap.has(roomNumber)) {

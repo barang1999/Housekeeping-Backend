@@ -11,6 +11,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const webpush = require("web-push");
 const cron = require("node-cron");
+const os = require("os");
 
 const allowedOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
 
@@ -329,4 +330,36 @@ cron.schedule('5 0 * * *', async () => {
 
 server.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
+
+    if ((process.env.ENABLE_RESOURCE_LOGS || '').toLowerCase() === 'true') {
+        const intervalMs = Math.max(parseInt(process.env.RESOURCE_LOG_INTERVAL_MS || '60000', 10), 10000);
+        console.log(`[diag] Resource logging enabled. Interval: ${intervalMs}ms`);
+        let lastCpu = process.cpuUsage();
+        setInterval(() => {
+            const mem = process.memoryUsage();
+            const rssMb = (mem.rss / (1024 * 1024)).toFixed(1);
+            const heapUsedMb = (mem.heapUsed / (1024 * 1024)).toFixed(1);
+            const heapTotalMb = (mem.heapTotal / (1024 * 1024)).toFixed(1);
+
+            const currentCpu = process.cpuUsage();
+            const userDiff = currentCpu.user - lastCpu.user;
+            const systemDiff = currentCpu.system - lastCpu.system;
+            lastCpu = currentCpu;
+            const cpuMs = (userDiff + systemDiff) / 1000;
+            const pct = ((cpuMs / intervalMs) * 100).toFixed(1);
+
+            const load = os.loadavg();
+
+            console.log("[diag] resource", {
+                rssMb,
+                heapUsedMb,
+                heapTotalMb,
+                cpuMs: cpuMs.toFixed(1),
+                cpuPct: `${pct}%`,
+                load1: load[0].toFixed(2),
+                load5: load[1].toFixed(2),
+                load15: load[2].toFixed(2)
+            });
+        }, intervalMs).unref();
+    }
 });
