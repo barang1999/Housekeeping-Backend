@@ -18,12 +18,10 @@ function authenticateToken(req, res, next) {
 
         try {
             const user = await User.findById(decodedToken.id);
-            console.log("authenticateToken: decodedToken.id", decodedToken.id);
             if (!user) {
                 return res.status(404).json({ message: "User not found" });
             }
             req.user = user;
-            console.log("authenticateToken: req.user set to", req.user);
             next();
         } catch (dbError) {
             console.error("Error fetching user in authenticateToken:", dbError);

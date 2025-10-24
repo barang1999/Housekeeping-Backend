@@ -213,82 +213,111 @@ const allRoomNumbers = [
     "201", "202", "203", "204", "205", "208", "209", "210", "211", "212", "213", "214", "215", "216", "217"
 ];
 
+// ---- App-wide cache for initial data ----
+let initialDataCache = null;
+let cacheDate = null;
+
+// Ensure logs for all rooms exist for the current day
+async function ensureTodaysCleaningLogs() {
+    try {
+        const { start: today, end: tomorrow } = getTodayRange();
+        const existingLogs = await CleaningLog.find({ date: { $gte: today, $lt: tomorrow } }).select('roomNumber').lean();
+        const existingRoomNumbers = new Set(existingLogs.map(log => String(log.roomNumber).padStart(3, "0")));
+        const missingRoomNumbers = allRoomNumbers.filter(room => !existingRoomNumbers.has(room));
+
+        if (missingRoomNumbers.length > 0) {
+            console.log(`[daily] creating ${missingRoomNumbers.length} missing cleaning logs for today`);
+            const newLogs = missingRoomNumbers.map(roomNumber => ({
+                roomNumber: parseInt(roomNumber, 10),
+                date: today
+            }));
+            await CleaningLog.insertMany(newLogs);
+            return true; // Logs were created
+        }
+    } catch (error) {
+        console.error('Error ensuring daily cleaning logs:', error);
+    }
+    return false; // No logs created
+}
+
+// Fetch and cache all the necessary initial data
+async function getOrCacheInitialData() {
+    const todayStr = moment().tz('Asia/Phnom_Penh').format('YYYY-MM-DD');
+    if (initialDataCache && cacheDate === todayStr) {
+        console.log('[cache] returning cached initial data');
+        return initialDataCache;
+    }
+
+    console.log('[cache] miss. fetching new initial data for', todayStr);
+    const { start: today, end: tomorrow } = getTodayRange();
+
+    // Queries to run in parallel
+    const queries = {
+        cleaningLogs: CleaningLog.find({ date: { $gte: today, $lt: tomorrow } }).lean(),
+        dndLogs: RoomDND.find({ date: { $gte: today, $lt: tomorrow } }, "roomNumber dndStatus").lean(),
+        priorityLogs: RoomPriority.find({}, "roomNumber priority").lean(),
+        inspectionLogs: InspectionLog.find({ date: { $gte: today, $lt: tomorrow } }).lean(),
+        roomNoteLogs: RoomNote.find({ updatedAt: { $gte: today, $lt: tomorrow } }).lean()
+    };
+
+    const results = await Promise.all(Object.values(queries));
+    const [cleaningLogs, dndLogs, priorityLogs, inspectionDocs, roomNoteLogs] = results;
+
+    // Process cleaning logs
+    const cleaningStatus = {};
+    cleaningLogs.forEach(log => {
+        const roomStr = String(log.roomNumber).padStart(3, "0");
+        if (log.checkedTime) cleaningStatus[roomStr] = { status: "checked" };
+        else if (log.finishTime) cleaningStatus[roomStr] = { status: "finished" };
+        else if (log.startTime) cleaningStatus[roomStr] = { status: "in_progress", startTime: log.startTime };
+        else cleaningStatus[roomStr] = { status: "not_started" };
+    });
+
+    // Process DND statuses
+    const dndStatus = {};
+    dndLogs.forEach(dnd => {
+        dndStatus[String(dnd.roomNumber).padStart(3, "0")] = dnd.dndStatus ? "dnd" : "available";
+    });
+
+    // Process priorities
+    const priorities = {};
+    priorityLogs.forEach(p => {
+        priorities[String(p.roomNumber).padStart(3, "0")] = p.priority;
+    });
+
+    // Process inspection logs
+    const inspectionLogs = inspectionDocs.map(log => ({
+        ...log,
+        roomNumber: String(log.roomNumber).padStart(3, "0"),
+    }));
+
+    // Process room notes
+    const roomNotes = {};
+    roomNoteLogs.forEach(note => {
+        roomNotes[String(note.roomNumber).padStart(3, "0")] = note;
+    });
+
+    initialDataCache = { cleaningStatus, dndStatus, priorities, inspectionLogs, roomNotes };
+    cacheDate = todayStr;
+
+    console.log('[cache] new data cached for', todayStr);
+    return initialDataCache;
+}
+
+// Invalidate cache on daily reset
+function invalidateCache() {
+    console.log('[cache] invalidating cache');
+    initialDataCache = null;
+    cacheDate = null;
+}
+
 io.on('connection', (socket) => {
     console.log('A user connected via WebSocket');
 
     socket.on('requestInitialData', async () => {
         try {
-            const { start: today, end: tomorrow } = getTodayRange();
-
-            // Fetch existing logs for today
-            const existingLogs = await CleaningLog.find({ date: { $gte: today, $lt: tomorrow } });
-            const existingRoomNumbers = new Set(existingLogs.map(log => String(log.roomNumber).padStart(3, "0")));
-
-            // Identify missing rooms
-            const missingRoomNumbers = allRoomNumbers.filter(room => !existingRoomNumbers.has(room));
-
-            // Create logs for missing rooms
-            if (missingRoomNumbers.length > 0) {
-                const newLogs = missingRoomNumbers.map(roomNumber => ({ 
-                    roomNumber: parseInt(roomNumber, 10),
-                    date: today
-                }));
-                await CleaningLog.insertMany(newLogs);
-            }
-
-            // Fetch all logs for today (including newly created ones)
-            const cleaningLogs = await CleaningLog.find({ date: { $gte: today, $lt: tomorrow } });
-            const cleaningStatus = {};
-            cleaningLogs.forEach(log => {
-                const roomStr = String(log.roomNumber).padStart(3, "0");
-                if (log.checkedTime) {
-                    cleaningStatus[roomStr] = { status: "checked" };
-                } else if (log.finishTime) {
-                    cleaningStatus[roomStr] = { status: "finished" };
-                } else if (log.startTime) {
-                    cleaningStatus[roomStr] = { status: "in_progress", startTime: log.startTime };
-                } else {
-                    cleaningStatus[roomStr] = { status: "not_started" };
-                }
-            });
-
-            // Fetch DND statuses for today
-            const dndLogs = await RoomDND.find({ date: { $gte: today, $lt: tomorrow } }, "roomNumber dndStatus").lean();
-            const dndStatus = {};
-            dndLogs.forEach(dnd => {
-                dndStatus[String(dnd.roomNumber).padStart(3, "0")] = dnd.dndStatus ? "dnd" : "available";
-            });
-
-            // Fetch priorities
-            const priorityLogs = await RoomPriority.find({}, "roomNumber priority").lean();
-            const priorities = {};
-            priorityLogs.forEach(p => {
-                priorities[String(p.roomNumber).padStart(3, "0")] = p.priority;
-            });
-
-            // Fetch inspection logs for today (Asia/Phnom_Penh)
-            const inspectionStart = moment().tz('Asia/Phnom_Penh').startOf('day').toDate();
-            const inspectionEnd = moment(inspectionStart).add(1, 'day').toDate();
-            const inspectionDocs = await InspectionLog.find({ date: { $gte: inspectionStart, $lt: inspectionEnd } }).lean();
-            const inspectionLogs = inspectionDocs.map(log => ({
-                ...log,
-                roomNumber: String(log.roomNumber).padStart(3, "0"),
-            }));
-
-            // Fetch all room notes updated today so UI can show current notes
-            const roomNoteLogs = await RoomNote.find({ updatedAt: { $gte: today, $lt: tomorrow } });
-            const roomNotes = {};
-            roomNoteLogs.forEach(note => {
-                roomNotes[String(note.roomNumber).padStart(3, "0")] = note;
-            });
-
-            socket.emit('initialData', {
-                cleaningStatus,
-                dndStatus,
-                priorities,
-                inspectionLogs,
-                roomNotes
-            });
+            const data = await getOrCacheInitialData();
+            socket.emit('initialData', data);
         } catch (error) {
             console.error('Error fetching initial data for WebSocket client:', error);
             socket.emit('initialDataError', { message: 'Failed to fetch initial data.' });
@@ -305,6 +334,7 @@ const PORT = process.env.PORT || 3001;
 // Schedule a task shortly after midnight (00:05) every day in Asia/Phnom_Penh timezone
 cron.schedule('5 0 * * *', async () => {
     console.log('Running daily log reset...');
+    invalidateCache(); // Invalidate before the transaction
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
@@ -317,6 +347,8 @@ cron.schedule('5 0 * * *', async () => {
         await session.commitTransaction();
         session.endSession();
 
+        // After reset, ensure today's logs are created and broadcast the reset event
+        await ensureTodaysCleaningLogs();
         io.emit('dailyReset');
         console.log('Daily log reset complete.');
     } catch (error) {
@@ -328,12 +360,16 @@ cron.schedule('5 0 * * *', async () => {
     timezone: "Asia/Phnom_Penh"
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`✅ Server running on port ${PORT}`);
+
+    // On startup, ensure today's cleaning logs exist
+    await ensureTodaysCleaningLogs();
 
     if ((process.env.ENABLE_RESOURCE_LOGS || '').toLowerCase() === 'true') {
         const intervalMs = Math.max(parseInt(process.env.RESOURCE_LOG_INTERVAL_MS || '60000', 10), 10000);
-        console.log(`[diag] Resource logging enabled. Interval: ${intervalMs}ms`);
+        const logCpuUsage = (process.env.RESOURCE_LOG_INCLUDE_CPU || 'true').toLowerCase() !== 'false';
+        console.log(`[diag] Resource logging enabled. Interval: ${intervalMs}ms. CPU tracked: ${logCpuUsage}`);
         let lastCpu = process.cpuUsage();
         setInterval(() => {
             const mem = process.memoryUsage();
@@ -341,25 +377,23 @@ server.listen(PORT, () => {
             const heapUsedMb = (mem.heapUsed / (1024 * 1024)).toFixed(1);
             const heapTotalMb = (mem.heapTotal / (1024 * 1024)).toFixed(1);
 
-            const currentCpu = process.cpuUsage();
-            const userDiff = currentCpu.user - lastCpu.user;
-            const systemDiff = currentCpu.system - lastCpu.system;
-            lastCpu = currentCpu;
-            const cpuMs = (userDiff + systemDiff) / 1000;
-            const pct = ((cpuMs / intervalMs) * 100).toFixed(1);
-
-            const load = os.loadavg();
-
-            console.log("[diag] resource", {
+            const payload = {
                 rssMb,
                 heapUsedMb,
-                heapTotalMb,
-                cpuMs: cpuMs.toFixed(1),
-                cpuPct: `${pct}%`,
-                load1: load[0].toFixed(2),
-                load5: load[1].toFixed(2),
-                load15: load[2].toFixed(2)
-            });
+                heapTotalMb
+            };
+
+            if (logCpuUsage) {
+                const currentCpu = process.cpuUsage();
+                const userDiff = currentCpu.user - lastCpu.user;
+                const systemDiff = currentCpu.system - lastCpu.system;
+                lastCpu = currentCpu;
+                const cpuMs = (userDiff + systemDiff) / 1000;
+                payload.cpuMs = cpuMs.toFixed(1);
+                payload.cpuPct = `${((cpuMs / intervalMs) * 100).toFixed(1)}%`;
+            }
+
+            console.log("[diag] resource", payload);
         }, intervalMs).unref();
     }
 });
