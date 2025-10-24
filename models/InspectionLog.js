@@ -11,7 +11,7 @@ const InspectionLogSchema = new mongoose.Schema({
     updatedBy: String,
     updatedAt: Date
 }, { timestamps: true });
-
+InspectionLogSchema.index({ updatedAt: 1 });
 InspectionLogSchema.index(
     { roomNumber: 1, date: 1 },
     { unique: true, partialFilterExpression: { date: { $exists: true } } }

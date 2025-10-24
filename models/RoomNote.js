@@ -8,6 +8,8 @@ const roomNoteSchema = new mongoose.Schema({
     lastUpdatedBy: { type: String, required: true },
 }, { timestamps: true });
 
+roomNoteSchema.index({ updatedAt: 1 });
+
 const RoomNote = mongoose.models.RoomNote || mongoose.model("RoomNote", roomNoteSchema);
 
 module.exports = RoomNote;

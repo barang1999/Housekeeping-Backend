@@ -8,4 +8,6 @@ const roomDNDSchema = new mongoose.Schema({
     date: { type: Date, default: Date.now }
 });
 
+roomDNDSchema.index({ date: 1 });
+
 module.exports = mongoose.models.RoomDND || mongoose.model("RoomDND", roomDNDSchema);
