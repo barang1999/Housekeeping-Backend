@@ -57,6 +57,7 @@ let pushEnabled = false;
 /** --------------------------------------------------- **/
 
 const app = express();
+app.options('*', cors({ origin: corsOriginConfig }));
 app.use(express.json());
 app.use(cors({ origin: corsOriginConfig }));
 app.use("/api", require("./routes"));
