@@ -59,6 +59,9 @@ app.use(express.json());
 app.use(cors({ origin: allowedOrigins }));
 app.use("/api", require("./routes"));
 
+// Fast wake endpoint for autosleep
+app.get('/api/ping', (_req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
+
 const mongoURI = process.env.MONGO_URI;
 
 console.log("[env] diag", {
@@ -91,7 +94,11 @@ const io = new Server(server, {
     cors: {
         origin: allowedOrigins,
         methods: ["GET", "POST"]
-    }
+    },
+    // Sleep-friendly Socket.IO settings
+    transports: ["websocket"],     // prefer pure websocket to reduce polling overhead
+    pingInterval: 60000,            // default ~25s → 60s lowers idle CPU
+    pingTimeout: 25000              // keep a reasonable timeout
 });
 console.log("✅ Socket.IO mounted", { path: "/socketio", allowedOrigins });
 
