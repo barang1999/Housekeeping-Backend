@@ -105,6 +105,17 @@ console.log("✅ Socket.IO mounted", { path: "/socketio", allowedOrigins });
 app.set("io", io);
 app.locals.pushEnabled = pushEnabled;
 
+// --- Idle shutdown to allow Railway autosleep when unused ---
+let lastActive = Date.now();
+const IDLE_MS = parseInt(process.env.SERVER_IDLE_MS || '60000', 10);
+setInterval(() => {
+  const clients = io.engine?.clientsCount || 0;
+  if (clients === 0 && Date.now() - lastActive > IDLE_MS) {
+    console.log(`[idle] No clients for ${IDLE_MS}ms. Exiting to allow autosleep.`);
+    try { server.close(() => process.exit(0)); } catch { process.exit(0); }
+  }
+}, 20000).unref();
+
 /** ---------------- Web Push helpers & routes ---------------- **/
 async function sendPushToAll(payload) {
   console.log("[push] sendPushToAll called with payload:", {
@@ -112,14 +123,16 @@ async function sendPushToAll(payload) {
     tag: payload?.tag,
     hasData: !!payload?.data
   });
-  // Disabled if keys are not set
   if (!app.locals.pushEnabled) return;
 
   const subs = await PushSubscription.find({}).lean();
   console.log("[push] subscriptions found:", subs.length);
   let _ok = 0, _fail = 0;
-  await Promise.all(
-    subs.map(async (sub) => {
+
+  const BATCH = parseInt(process.env.PUSH_BATCH_SIZE || '100', 10);
+  for (let i = 0; i < subs.length; i += BATCH) {
+    const slice = subs.slice(i, i + BATCH);
+    await Promise.all(slice.map(async (sub) => {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: sub.keys },
@@ -128,15 +141,17 @@ async function sendPushToAll(payload) {
         _ok++;
       } catch (err) {
         _fail++;
-        // Clean-up stale/invalid subscriptions
         if (err && (err.statusCode === 410 || err.statusCode === 404)) {
           await PushSubscription.deleteOne({ endpoint: sub.endpoint });
         } else {
           console.error("Push send error:", err?.statusCode, err?.body || err?.message);
         }
       }
-    })
-  );
+    }));
+    // yield briefly to avoid blocking the event loop on large sends
+    await new Promise(r => setTimeout(r, 10));
+  }
+
   console.log("[push] send complete:", { success: _ok, failed: _fail });
 }
 
@@ -347,6 +362,7 @@ const cacheHelpers = {
 app.set('cacheHelpers', cacheHelpers);
 
 io.on('connection', (socket) => {
+    lastActive = Date.now();
     console.log('A user connected via WebSocket');
 
     socket.on('requestInitialData', async () => {
@@ -360,6 +376,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
+        lastActive = Date.now();
         console.log('User disconnected from WebSocket');
     });
 });

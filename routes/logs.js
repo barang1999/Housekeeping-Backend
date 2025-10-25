@@ -15,7 +15,10 @@ const { emitRoomUpdate, emitRoomChecked, emitDndUpdate, emitPriorityUpdate, emit
 
 const router = express.Router();
 
-const DEFAULT_LATEST_WINDOW_DAYS = parseInt(process.env.LOGS_LATEST_WINDOW_DAYS || '30', 10);
+
+// Live-feed seed window & limit (keep payloads small and fast)
+const LIVE_FEED_WINDOW_DAYS = parseInt(process.env.LIVE_FEED_WINDOW_DAYS || '90', 10);
+const LIVE_FEED_SEED_LIMIT = parseInt(process.env.LIVE_FEED_SEED_LIMIT || '200', 10);
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
@@ -708,9 +711,16 @@ router.get("/logs/live-feed", authenticateToken, async (req, res) => {
         };
         const padRoom = (value) => String(value).padStart(3, "0");
 
-        const cleaningLogs = await CleaningLog.find({})
+        // Seed window for live-feed
+        const since = moment().tz(tz).subtract(LIVE_FEED_WINDOW_DAYS, 'days').startOf('day').toDate();
+
+        // Cleaning logs, date-bounded and field-light
+        const cleaningLogs = await CleaningLog.find({
+            date: { $gte: since }
+        })
+            .select('roomNumber startTime startedBy finishTime finishedBy checkedTime checkedBy date')
             .sort({ date: -1, _id: -1 })
-            .limit(200)
+            .limit(LIVE_FEED_SEED_LIMIT)
             .lean();
 
         cleaningLogs.forEach((log) => {
@@ -767,7 +777,10 @@ router.get("/logs/live-feed", authenticateToken, async (req, res) => {
             }
         });
 
-        const dndEntries = await RoomDND.find({}).lean();
+        // DND entries, bounded query
+        const dndEntries = await RoomDND.find({ dndSetAt: { $gte: since } })
+            .select('roomNumber dndStatus dndSetBy dndSetAt')
+            .lean();
         dndEntries.forEach((entry) => {
             const timestamp = entry.dndSetAt ? new Date(entry.dndSetAt).getTime() : null;
             if (!timestamp) return;
@@ -783,7 +796,9 @@ router.get("/logs/live-feed", authenticateToken, async (req, res) => {
             });
         });
 
-        const roomNotes = await RoomNote.find({}).lean();
+        // Room notes, bounded query
+        const roomNotes = await RoomNote.find({ updatedAt: { $gte: since } })
+            .lean();
         roomNotes.forEach((note) => {
             const timestamp = note.updatedAt ? new Date(note.updatedAt).getTime() : null;
             if (!timestamp) return;
@@ -799,7 +814,7 @@ router.get("/logs/live-feed", authenticateToken, async (req, res) => {
 
         events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
-        res.status(200).json({ events: events.slice(0, 200) });
+        res.status(200).json({ events: events.slice(0, LIVE_FEED_SEED_LIMIT) });
     } catch (error) {
         console.error("Error fetching live feed seed data:", error);
         res.status(500).json({ message: "Failed to fetch live feed data", error: error.message });
