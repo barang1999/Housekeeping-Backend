@@ -13,7 +13,10 @@ const webpush = require("web-push");
 const cron = require("node-cron");
 const os = require("os");
 
-const allowedOriginsList = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
+const allowedOriginsList = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 // If no CORS_ORIGINS provided, allow all (helpful for first-time deploys / wake pings)
 const corsOriginConfig = allowedOriginsList.length > 0 ? allowedOriginsList : true;
 
@@ -61,6 +64,23 @@ let pushEnabled = false;
 
 const app = express();
 
+// Fast wake endpoint for autosleep — defined before CORS/router so it never 502s on cold start
+app.options('/api/ping', (_req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.status(204).end();
+});
+app.get('/api/ping', (_req, res) => {
+  lastActive = Date.now(); // bump activity so idle timer resets
+  // Extend grace so sockets can reconnect right after a cold start
+  graceUntil = Date.now() + Math.max(30000, STARTUP_GRACE_MS / 2);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.status(200).json({ ok: true, ts: Date.now() });
+});
+
 // Unified CORS (Express + Socket.IO) — allow only configured origins (or all if none configured)
 const corsOptions = {
   origin: (origin, cb) => {
@@ -80,13 +100,6 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use("/api", require("./routes"));
 
-// Fast wake endpoint for autosleep
-app.get('/api/ping', (_req, res) => {
-  lastActive = Date.now(); // bump activity so idle timer resets
-  // Extend grace so sockets can reconnect right after a cold start
-  graceUntil = Date.now() + Math.max(30000, STARTUP_GRACE_MS / 2);
-  res.status(200).json({ ok: true, ts: Date.now() });
-});
 
 const mongoURI = process.env.MONGO_URI;
 
