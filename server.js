@@ -111,15 +111,22 @@ app.set("io", io);
 app.locals.pushEnabled = pushEnabled;
 
 // --- Idle shutdown to allow Railway autosleep when unused ---
+// Feature flag for idle shutdown (disabled by default)
+const ENABLE_IDLE_SHUTDOWN = (process.env.SERVER_ENABLE_IDLE || 'false').toLowerCase() === 'true';
 let lastActive = Date.now();
 const IDLE_MS = parseInt(process.env.SERVER_IDLE_MS || '60000', 10);
-setInterval(() => {
-  const clients = io.engine?.clientsCount || 0;
-  if (clients === 0 && Date.now() - lastActive > IDLE_MS) {
-    console.log(`[idle] No clients for ${IDLE_MS}ms. Exiting to allow autosleep.`);
-    try { server.close(() => process.exit(0)); } catch { process.exit(0); }
-  }
-}, 20000).unref();
+if (ENABLE_IDLE_SHUTDOWN) {
+  setInterval(() => {
+    const clients = io.engine?.clientsCount || 0;
+    const activityMarker = Math.max(lastActive, typeof graceUntil !== 'undefined' ? graceUntil : lastActive);
+    if (clients === 0 && Date.now() - activityMarker > IDLE_MS) {
+      console.log(`[idle] No clients for ${IDLE_MS}ms. Exiting to allow autosleep.`);
+      try { server.close(() => process.exit(0)); } catch { process.exit(0); }
+    }
+  }, 20000).unref();
+} else {
+  console.log('[idle] Idle shutdown is DISABLED (SERVER_ENABLE_IDLE=false).');
+}
 
 /** ---------------- Web Push helpers & routes ---------------- **/
 async function sendPushToAll(payload) {
