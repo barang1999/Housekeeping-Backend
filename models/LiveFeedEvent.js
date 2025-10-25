@@ -18,7 +18,7 @@ const LiveFeedEventSchema = new Schema(
     type: {
       type: String,
       required: true,
-      enum: ['roomUpdate', 'roomChecked', 'dndUpdate', 'priorityUpdate', 'noteUpdate', 'system'],
+      enum: ['roomUpdate', 'roomChecked', 'dndUpdate', 'priorityUpdate', 'noteUpdate', 'system', 'inspectionUpdate'],
     },
     roomNumber: { type: String, default: null }, // always 3-digit padded on write helper
     payload: { type: Schema.Types.Mixed, default: {} }, // raw payload emitted to clients

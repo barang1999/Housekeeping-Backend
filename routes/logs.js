@@ -815,6 +815,27 @@ router.get("/logs/live-feed", authenticateToken, async (req, res) => {
             });
         });
 
+        // Inspection logs, bounded query
+        const inspectionLogs = await InspectionLog.find({ updatedAt: { $gte: since } })
+            .select('roomNumber overallScore updatedBy updatedAt')
+            .lean();
+        console.log('[live-feed seed] inspectionLogs', inspectionLogs);
+        inspectionLogs.forEach((log) => {
+            const timestamp = log.updatedAt ? new Date(log.updatedAt).getTime() : null;
+            if (!timestamp) return;
+            events.push({
+                type: "inspectionUpdate",
+                ts: timestamp,
+                payload: {
+                    roomNumber: padRoom(log.roomNumber),
+                    log: {
+                        ...log,
+                        roomNumber: padRoom(log.roomNumber),
+                    }
+                },
+            });
+        });
+
         events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
         res.status(200).json({ events: events.slice(0, LIVE_FEED_SEED_LIMIT) });
