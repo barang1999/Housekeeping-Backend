@@ -13,7 +13,9 @@ const webpush = require("web-push");
 const cron = require("node-cron");
 const os = require("os");
 
-const allowedOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
+const allowedOriginsList = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
+// If no CORS_ORIGINS provided, allow all (helpful for first-time deploys / wake pings)
+const corsOriginConfig = allowedOriginsList.length > 0 ? allowedOriginsList : true;
 
 /** ---------------- Web Push (VAPID) ---------------- **/
 const sanitizeKey = (k) => (k || "").trim().replace(/\s+/g, "");
@@ -56,7 +58,7 @@ let pushEnabled = false;
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: allowedOrigins }));
+app.use(cors({ origin: corsOriginConfig }));
 app.use("/api", require("./routes"));
 
 // Fast wake endpoint for autosleep
@@ -95,7 +97,7 @@ const io = new Server(server, {
     // Use a unique path for the app socket so it doesn't collide with WDS HMR
     path: "/socketio",
     cors: {
-        origin: allowedOrigins,
+        origin: corsOriginConfig,
         methods: ["GET", "POST"]
     },
     // Sleep-friendly Socket.IO settings
@@ -103,7 +105,7 @@ const io = new Server(server, {
     pingInterval: 60000,            // default ~25s → 60s lowers idle CPU
     pingTimeout: 25000              // keep a reasonable timeout
 });
-console.log("✅ Socket.IO mounted", { path: "/socketio", allowedOrigins });
+console.log("✅ Socket.IO mounted", { path: "/socketio", allowedOrigins: corsOriginConfig });
 
 app.set("io", io);
 app.locals.pushEnabled = pushEnabled;
