@@ -13,10 +13,7 @@ const webpush = require("web-push");
 const cron = require("node-cron");
 const os = require("os");
 
-const allowedOriginsList = (process.env.CORS_ORIGINS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+const allowedOriginsList = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [];
 // If no CORS_ORIGINS provided, allow all (helpful for first-time deploys / wake pings)
 const corsOriginConfig = allowedOriginsList.length > 0 ? allowedOriginsList : true;
 
@@ -64,23 +61,6 @@ let pushEnabled = false;
 
 const app = express();
 
-// Fast wake endpoint for autosleep — defined before CORS/router so it never 502s on cold start
-app.options('/api/ping', (_req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.status(204).end();
-});
-app.get('/api/ping', (_req, res) => {
-  lastActive = Date.now(); // bump activity so idle timer resets
-  // Extend grace so sockets can reconnect right after a cold start
-  graceUntil = Date.now() + Math.max(30000, STARTUP_GRACE_MS / 2);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.status(200).json({ ok: true, ts: Date.now() });
-});
-
 // Unified CORS (Express + Socket.IO) — allow only configured origins (or all if none configured)
 const corsOptions = {
   origin: (origin, cb) => {
@@ -100,6 +80,11 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use("/api", require("./routes"));
 
+// Fast wake endpoint for autosleep
+app.get('/api/ping', (_req, res) => {
+  lastActive = Date.now(); // bump activity so idle timer resets
+  res.status(200).json({ ok: true, ts: Date.now() });
+});
 
 const mongoURI = process.env.MONGO_URI;
 
@@ -146,9 +131,6 @@ console.log("✅ Socket.IO mounted", { path: "/socketio", allowedOrigins: corsOr
 app.set("io", io);
 app.locals.pushEnabled = pushEnabled;
 
-// Grace period to avoid immediate idle-exit during cold starts/wake-ups
-const STARTUP_GRACE_MS = parseInt(process.env.SERVER_STARTUP_GRACE_MS || '60000', 10);
-let graceUntil = Date.now() + STARTUP_GRACE_MS;
 // --- Idle shutdown to allow Railway autosleep when unused ---
 // Feature flag for idle shutdown (disabled by default)
 const ENABLE_IDLE_SHUTDOWN = (process.env.SERVER_ENABLE_IDLE || 'false').toLowerCase() === 'true';
@@ -157,19 +139,10 @@ const IDLE_MS = parseInt(process.env.SERVER_IDLE_MS || '60000', 10);
 if (ENABLE_IDLE_SHUTDOWN) {
   setInterval(() => {
     const clients = io.engine?.clientsCount || 0;
-    const now = Date.now();
-    const inGrace = now < graceUntil;
-    const quietLongEnough = now - lastActive > IDLE_MS;
-    if (clients === 0 && !inGrace && quietLongEnough) {
-      console.log(`[idle] No clients for ${IDLE_MS}ms (grace passed). Exiting to allow autosleep.`);
+    const activityMarker = Math.max(lastActive, typeof graceUntil !== 'undefined' ? graceUntil : lastActive);
+    if (clients === 0 && Date.now() - activityMarker > IDLE_MS) {
+      console.log(`[idle] No clients for ${IDLE_MS}ms. Exiting to allow autosleep.`);
       try { server.close(() => process.exit(0)); } catch { process.exit(0); }
-    } else {
-      console.log('[idle:trace]', {
-        clients,
-        sinceLastActiveMs: now - lastActive,
-        inGraceMs: Math.max(0, graceUntil - now),
-        idleMsThreshold: IDLE_MS
-      });
     }
   }, 20000).unref();
 } else {
@@ -433,8 +406,6 @@ app.set('cacheHelpers', cacheHelpers);
 
 io.on('connection', (socket) => {
     lastActive = Date.now();
-    // Brief grace after a successful connect to prevent race-y exits
-    graceUntil = Date.now() + 30000;
     console.log('A user connected via WebSocket');
 
     socket.on('requestInitialData', async () => {
@@ -486,7 +457,6 @@ cron.schedule('5 0 * * *', async () => {
 
 server.listen(PORT, async () => {
     console.log(`✅ Server running on port ${PORT}`);
-    console.log('[idle] startup grace ms =', STARTUP_GRACE_MS);
 
     // On startup, ensure today's cleaning logs exist
     await ensureTodaysCleaningLogs();
