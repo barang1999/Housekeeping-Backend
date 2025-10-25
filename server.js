@@ -58,18 +58,9 @@ let pushEnabled = false;
 
 const app = express();
 
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type,Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-app.options('*', cors({ origin: corsOriginConfig }));
-app.use(express.json());
-app.use(cors({ origin: corsOriginConfig }));
+
+app.use(cors({ origin: true, credentials: true }));
+app.options('*', cors());
 app.use("/api", require("./routes"));
 
 // Fast wake endpoint for autosleep
