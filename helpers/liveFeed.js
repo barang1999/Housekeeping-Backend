@@ -68,6 +68,10 @@ function emitNoteUpdate(io, payload, meta) {
   const normalized = { ...payload, roomNumber: padRoom(payload.roomNumber) };
   return broadcastAndStore(io, 'noteUpdate', normalized, { meta });
 }
+function emitInspectionUpdate(io, payload, meta) {
+  const normalized = { ...payload, roomNumber: padRoom(payload.roomNumber) };
+  return broadcastAndStore(io, 'inspectionUpdate', normalized, { meta });
+}
 
 module.exports = {
   broadcastAndStore,
@@ -76,5 +80,6 @@ module.exports = {
   emitDndUpdate,
   emitPriorityUpdate,
   emitNoteUpdate,
+  emitInspectionUpdate,
   padRoom,
 };

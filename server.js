@@ -369,6 +369,16 @@ const cacheHelpers = {
     } catch (e) {
       console.warn('[cache] upsertCleaningStatus failed', e?.message || e);
     }
+  },
+  addInspectionLog: (log) => {
+    try {
+      if (!initialDataCache) return;
+      initialDataCache.inspectionLogs = initialDataCache.inspectionLogs || [];
+      initialDataCache.inspectionLogs.push(log);
+      console.log('[cache] addInspectionLog', log.roomNumber);
+    } catch (e) {
+      console.warn('[cache] addInspectionLog failed', e?.message || e);
+    }
   }
 };
 app.set('cacheHelpers', cacheHelpers);

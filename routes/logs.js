@@ -11,7 +11,7 @@ const { authenticateToken } = require("./auth");
 
 const RoomNote = require("../models/RoomNote");
 const LiveFeedEvent = require("../models/LiveFeedEvent");
-const { emitRoomUpdate, emitRoomChecked, emitDndUpdate, emitPriorityUpdate, emitNoteUpdate } = require("../helpers/liveFeed");
+const { emitRoomUpdate, emitRoomChecked, emitDndUpdate, emitPriorityUpdate, emitNoteUpdate, emitInspectionUpdate } = require("../helpers/liveFeed");
 
 const router = express.Router();
 
@@ -84,8 +84,9 @@ router.post("/logs/inspection", authenticateToken, async (req, res) => {
         const updatedLog = await InspectionLog.findOne({ roomNumber, date: { $gte: start, $lt: end } }).lean();
         if (updatedLog) {
             const paddedRoom = String(roomNumber).padStart(3, "0");
-            const logPayload = { ...updatedLog, roomNumber: paddedRoom };
-            io.emit("inspectionUpdate", { roomNumber: paddedRoom, log: logPayload });
+            await emitInspectionUpdate(io, { roomNumber: paddedRoom, log: logPayload });
+            const cache = req.app.get('cacheHelpers');
+            cache?.addInspectionLog(logPayload);
         }
         res.status(200).json({ message: "Inspection updated successfully" });
     } catch (err) {
@@ -149,7 +150,9 @@ router.post("/inspection/submit", authenticateToken, async (req, res) => {
             logObject.items = Object.fromEntries(logObject.items);
             const logPayload = { ...logObject, roomNumber: paddedRoom };
             console.log('Emitting inspectionUpdate event:', { roomNumber: paddedRoom, log: logPayload });
-            io.emit("inspectionUpdate", { roomNumber: paddedRoom, log: logPayload });
+            await emitInspectionUpdate(io, { roomNumber: paddedRoom, log: logPayload });
+            const cache = req.app.get('cacheHelpers');
+            cache?.addInspectionLog(logPayload);
         }
         res.status(200).json({ message: "Inspection submitted successfully", log: updatedLog });
 
