@@ -311,6 +311,34 @@ function invalidateCache() {
     cacheDate = null;
 }
 
+// ---- Cache helpers for mutation routes ----
+const cacheHelpers = {
+  invalidate: () => {
+    try {
+      invalidateCache();
+    } catch (e) {
+      console.warn('[cache] invalidate failed', e?.message || e);
+    }
+  },
+  upsertCleaningStatus: ({ roomNumber, status, startTime }) => {
+    try {
+      if (!initialDataCache) return; // nothing cached yet
+      const roomStr = String(roomNumber).padStart(3, '0');
+      initialDataCache.cleaningStatus = initialDataCache.cleaningStatus || {};
+
+      if (status === 'in_progress' && startTime) {
+        initialDataCache.cleaningStatus[roomStr] = { status, startTime };
+      } else {
+        initialDataCache.cleaningStatus[roomStr] = { status };
+      }
+      console.log('[cache] upsertCleaningStatus', roomStr, initialDataCache.cleaningStatus[roomStr]);
+    } catch (e) {
+      console.warn('[cache] upsertCleaningStatus failed', e?.message || e);
+    }
+  }
+};
+app.set('cacheHelpers', cacheHelpers);
+
 io.on('connection', (socket) => {
     console.log('A user connected via WebSocket');
 

@@ -308,6 +308,9 @@ router.post("/logs/reset-cleaning", async (req, res) => {
         const padded = String(roomNumber).padStart(3, "0");
         await emitRoomUpdate(io, { roomNumber: padded, status: "available", previousStatus: "available" });
         io.emit("resetCleaning", { roomNumber, status: "available" });
+        // keep initialData cache in sync
+        const cache = req.app.get('cacheHelpers');
+        cache?.upsertCleaningStatus({ roomNumber, status: 'available' });
 
         res.json({ message: `✅ Cleaning status reset for Room ${roomNumber}` });
 
@@ -364,6 +367,9 @@ router.post("/logs/start", authenticateToken, async (req, res) => {
         };
         console.log("Emitting roomUpdate from /logs/start:", updatePayload);
         await emitRoomUpdate(io, updatePayload);
+        // keep initialData cache in sync
+const cache = req.app.get('cacheHelpers');
+cache?.upsertCleaningStatus({ roomNumber, status: 'in_progress', startTime });
         // Web Push: Cleaning Started
         const sendPushStart = req.app.get("sendPush");
         if (sendPushStart) {
@@ -388,7 +394,7 @@ router.post("/logs/start", authenticateToken, async (req, res) => {
     }
 });
 
-router.post("/logs/finish", async (req, res) => {
+router.post("/logs/finish", authenticateToken, async (req, res) => {
     const io = req.app.get('io');
     let { roomNumber, username, finishTime, status } = req.body;
 
@@ -402,7 +408,9 @@ router.post("/logs/finish", async (req, res) => {
 
     try {
         const { start, end } = getTodayRange();
+        console.log("[/logs/finish] Received request body:", req.body);
         const log = await CleaningLog.findOne({ roomNumber, date: { $gte: start, $lt: end }, finishTime: null });
+        console.log("[/logs/finish] Found log to update:", log);
         
         if (!log) {
             return res.status(400).json({ message: "Log not found or already finished" });
@@ -447,6 +455,9 @@ router.post("/logs/finish", async (req, res) => {
         console.log("[push] trigger FINISH for room", String(roomNumber).padStart(3, "0"), "by", username);
         console.log("Emitting roomUpdate from /logs/finish:", updatePayload);
         await emitRoomUpdate(io, updatePayload);
+        // keep initialData cache in sync
+const cache = req.app.get('cacheHelpers');
+cache?.upsertCleaningStatus({ roomNumber, status: 'finished' });
         // Web Push: Cleaning Finished
         const sendPushFinish = req.app.get("sendPush");
         if (sendPushFinish) {
@@ -499,6 +510,9 @@ router.post("/logs/check", async (req, res) => {
             checkedBy: username, 
             checkedTime 
         });
+        // keep initialData cache in sync
+const cache = req.app.get('cacheHelpers');
+cache?.upsertCleaningStatus({ roomNumber, status: 'checked' });
 
         res.status(200).json({ message: `Room ${roomNumber} checked by ${username}` });
 
@@ -630,6 +644,9 @@ router.post("/logs/clear", async (req, res) => {
         allRoomNumbers.forEach(roomNumber => {
             io.emit("resetCleaning", { roomNumber, status: "available" });
         });
+        // drop cached initialData after destructive clear
+        const cache = req.app.get('cacheHelpers');
+        cache?.invalidate?.();
 
         return res.status(200).json({
             message: "✅ All logs, DND, priorities, checked statuses, and inspection logs cleared successfully.",
