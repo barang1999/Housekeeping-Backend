@@ -17,6 +17,9 @@ const allowedOriginsList = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.s
 // If no CORS_ORIGINS provided, allow all (helpful for first-time deploys / wake pings)
 const corsOriginConfig = allowedOriginsList.length > 0 ? allowedOriginsList : true;
 
+// Log CORS configuration at startup
+console.log('[cors] configured origins:', corsOriginConfig === true ? '* (all)' : allowedOriginsList);
+
 /** ---------------- Web Push (VAPID) ---------------- **/
 const sanitizeKey = (k) => (k || "").trim().replace(/\s+/g, "");
 
@@ -58,9 +61,23 @@ let pushEnabled = false;
 
 const app = express();
 
-
-app.use(cors({ origin: true, credentials: true }));
-app.options('*', cors());
+// Unified CORS (Express + Socket.IO) — allow only configured origins (or all if none configured)
+const corsOptions = {
+  origin: (origin, cb) => {
+    // Allow non-browser or same-origin requests with no Origin header
+    if (!origin) return cb(null, true);
+    if (corsOriginConfig === true) return cb(null, true); // allow all if no CORS_ORIGINS set
+    if (Array.isArray(allowedOriginsList) && allowedOriginsList.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: Origin not allowed -> ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 204,
+  maxAge: 86400 // cache preflight for 24h
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use("/api", require("./routes"));
 
 // Fast wake endpoint for autosleep
@@ -99,8 +116,10 @@ const io = new Server(server, {
     // Use a unique path for the app socket so it doesn't collide with WDS HMR
     path: "/socketio",
     cors: {
-        origin: corsOriginConfig,
-        methods: ["GET", "POST"]
+      origin: corsOriginConfig,           // [] or true
+      methods: ['GET', 'POST'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      credentials: true
     },
     // Sleep-friendly Socket.IO settings
     transports: ["websocket"],     // prefer pure websocket to reduce polling overhead
