@@ -60,7 +60,10 @@ app.use(cors({ origin: allowedOrigins }));
 app.use("/api", require("./routes"));
 
 // Fast wake endpoint for autosleep
-app.get('/api/ping', (_req, res) => res.status(200).json({ ok: true, ts: Date.now() }));
+app.get('/api/ping', (_req, res) => {
+  lastActive = Date.now(); // bump activity so idle timer resets
+  res.status(200).json({ ok: true, ts: Date.now() });
+});
 
 const mongoURI = process.env.MONGO_URI;
 
