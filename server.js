@@ -81,6 +81,8 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+// Count any HTTP request as activity (pre-route)
+app.use((req, _res, next) => { lastActive = Date.now(); next(); });
 app.use("/api", require("./routes"));
 
 // Fast wake endpoint for autosleep
@@ -135,16 +137,32 @@ app.set("io", io);
 app.locals.pushEnabled = pushEnabled;
 
 // --- Idle shutdown to allow Railway autosleep when unused ---
+// Business-hours keep-awake config (local time in Asia/Phnom_Penh by default)
+const BUSINESS_TZ = process.env.BUSINESS_TZ || 'Asia/Phnom_Penh';
+const BUSINESS_START_HOUR = parseInt(process.env.BUSINESS_START_HOUR || '6', 10);   // 06:00
+const BUSINESS_END_HOUR   = parseInt(process.env.BUSINESS_END_HOUR   || '19', 10);  // 19:00
+
+// Small boot grace so we don't immediately re-exit on cold start
+let graceUntil = Date.now() + 15000; // 15s after process boot
 // Feature flag for idle shutdown (disabled by default)
 const ENABLE_IDLE_SHUTDOWN = (process.env.SERVER_ENABLE_IDLE || 'false').toLowerCase() === 'true';
 let lastActive = Date.now();
 const IDLE_MS = parseInt(process.env.SERVER_IDLE_MS || '60000', 10);
 if (ENABLE_IDLE_SHUTDOWN) {
   setInterval(() => {
+    // Keep server awake between configured business hours (local time)
+    const nowLocal = moment().tz(BUSINESS_TZ);
+    const hour = nowLocal.hour();
+    const withinBusiness = hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
+    if (withinBusiness) {
+      // During business hours we do not exit due to idleness
+      return;
+    }
+
     const clients = io.engine?.clientsCount || 0;
     const activityMarker = Math.max(lastActive, typeof graceUntil !== 'undefined' ? graceUntil : lastActive);
     if (clients === 0 && Date.now() - activityMarker > IDLE_MS) {
-      console.log(`[idle] No clients for ${IDLE_MS}ms. Exiting to allow autosleep.`);
+      console.log(`[idle] No clients for ${IDLE_MS}ms outside business hours. Exiting to allow autosleep.`);
       try { server.close(() => process.exit(0)); } catch { process.exit(0); }
     }
   }, 20000).unref();
@@ -433,6 +451,8 @@ app.set('cacheHelpers', cacheHelpers);
 io.on('connection', (socket) => {
     lastActive = Date.now();
     console.log('A user connected via WebSocket');
+    // Any socket traffic should keep the process active
+    socket.onAny(() => { lastActive = Date.now(); });
 
     socket.on('requestInitialData', async () => {
         try {
@@ -445,7 +465,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        lastActive = Date.now();
         console.log('User disconnected from WebSocket');
     });
 });
@@ -481,8 +500,33 @@ cron.schedule('5 0 * * *', async () => {
     timezone: "Asia/Phnom_Penh"
 });
 
+// --- Business-hours scheduler ---
+// At 06:00 local time, bump activity and add a short grace period so the server stays warm
+cron.schedule('0 6 * * *', () => {
+  try {
+    const now = Date.now();
+    lastActive = now;
+    graceUntil = now + 5 * 60 * 1000; // 5 minutes grace after auto-start
+    console.log('[schedule] 06:00 reached → keeping server warm for business hours');
+  } catch (e) {
+    console.warn('[schedule] 06:00 handler error', e?.message || e);
+  }
+}, { timezone: BUSINESS_TZ });
+
+// At 19:00 local time, force a graceful exit so Railway can autosleep (pause billing)
+cron.schedule('0 19 * * *', () => {
+  try {
+    console.log('[schedule] 19:00 reached → exiting to allow sleep');
+    server.close(() => process.exit(0));
+  } catch (e) {
+    console.warn('[schedule] 19:00 handler error', e?.message || e);
+    process.exit(0);
+  }
+}, { timezone: BUSINESS_TZ });
+
 server.listen(PORT, async () => {
     console.log(`✅ Server running on port ${PORT}`);
+    console.log(`[schedule] Business hours kept awake: ${BUSINESS_START_HOUR}:00–${BUSINESS_END_HOUR}:00 ${BUSINESS_TZ}`);
 
     // On startup, ensure today's cleaning logs exist
     await ensureTodaysCleaningLogs();
