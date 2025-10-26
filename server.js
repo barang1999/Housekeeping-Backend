@@ -60,6 +60,9 @@ let pushEnabled = false;
 /** --------------------------------------------------- **/
 
 const app = express();
+// Body parsers (must be registered BEFORE any routes)
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
 
 // Unified CORS (Express + Socket.IO) — allow only configured origins (or all if none configured)
 const corsOptions = {
