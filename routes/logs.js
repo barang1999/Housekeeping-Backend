@@ -247,6 +247,9 @@ router.post("/logs/dnd", authenticateToken, async (req, res) => {
             dndSetBy: updatedRoom.dndSetBy,
             dndSetAt: updatedRoom.dndSetAt
         });
+        // keep initialData cache in sync
+        const cache = req.app.get('cacheHelpers');
+        cache?.upsertDndStatus({ roomNumber, dndStatus: updatedRoom.dndStatus });
         // Web Push: DND toggled
         const sendPushDND = req.app.get("sendPush");
         if (sendPushDND) {
@@ -692,6 +695,9 @@ router.post("/logs/notes", authenticateToken, async (req, res) => {
         );
 
         await emitNoteUpdate(io, { roomNumber, notes: updatedNote });
+        // keep initialData cache in sync
+        const cache = req.app.get('cacheHelpers');
+        cache?.upsertRoomNote({ roomNumber, note: updatedNote });
         res.status(200).json(updatedNote);
     } catch (error) {
         console.error("Error updating room note:", error);

@@ -404,6 +404,29 @@ const cacheHelpers = {
       console.warn('[cache] addInspectionLog failed', e?.message || e);
     }
   }
+  ,
+  upsertDndStatus: ({ roomNumber, dndStatus }) => {
+    try {
+      if (!initialDataCache) return; // nothing cached yet
+      const roomStr = String(roomNumber).padStart(3, '0');
+      initialDataCache.dndStatus = initialDataCache.dndStatus || {};
+      initialDataCache.dndStatus[roomStr] = dndStatus ? 'dnd' : 'available';
+      console.log('[cache] upsertDndStatus', roomStr, initialDataCache.dndStatus[roomStr]);
+    } catch (e) {
+      console.warn('[cache] upsertDndStatus failed', e?.message || e);
+    }
+  },
+  upsertRoomNote: ({ roomNumber, note }) => {
+    try {
+      if (!initialDataCache) return; // nothing cached yet
+      const roomStr = String(roomNumber).padStart(3, '0');
+      initialDataCache.roomNotes = initialDataCache.roomNotes || {};
+      initialDataCache.roomNotes[roomStr] = note;
+      console.log('[cache] upsertRoomNote', roomStr);
+    } catch (e) {
+      console.warn('[cache] upsertRoomNote failed', e?.message || e);
+    }
+  }
 };
 app.set('cacheHelpers', cacheHelpers);
 
