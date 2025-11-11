@@ -211,6 +211,7 @@ router.post("/logs/dnd", authenticateToken, async (req, res) => {
         console.log("logs/dnd POST: req.user", req.user);
         console.log("logs/dnd POST: dndSetBy", dndSetBy);
 
+
         if (!roomNumber) {
             return res.status(400).json({ message: "Room number is required." });
         }
@@ -219,17 +220,14 @@ router.post("/logs/dnd", authenticateToken, async (req, res) => {
             return res.status(401).json({ message: "User not found" });
         }
 
-        const { start, end } = getTodayRange();
         const updatedRoom = await RoomDND.findOneAndUpdate(
-            { roomNumber, date: { $gte: start, $lt: end } },
+            { roomNumber },
             { 
                 $set: { 
                     dndStatus: dndStatus, 
                     dndSetBy: dndSetBy,
-                    dndSetAt: dndStatus ? new Date() : null
-                },
-                $setOnInsert: {
-                    date: start
+                    dndSetAt: dndStatus ? new Date() : null,
+                    date: new Date() // Update the date to the current date
                 }
             },
             { upsert: true, new: true }

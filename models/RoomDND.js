@@ -5,9 +5,9 @@ const roomDNDSchema = new mongoose.Schema({
     dndStatus: { type: Boolean, default: false },
     dndSetBy: { type: String },
     dndSetAt: { type: Date },
-    date: { type: Date, default: Date.now }
+    date: { type: Date }
 });
 
-roomDNDSchema.index({ date: 1 });
+roomDNDSchema.index({ roomNumber: 1 }, { unique: true });
 
 module.exports = mongoose.models.RoomDND || mongoose.model("RoomDND", roomDNDSchema);
